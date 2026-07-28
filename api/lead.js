@@ -1,7 +1,7 @@
-// Serverless function (Vercel): receives the company-payment request form
-// and forwards it to Telegram via a bot. Configure two env vars in Vercel:
-//   TELEGRAM_BOT_TOKEN — token from @BotFather
-//   TELEGRAM_CHAT_ID   — your chat id (from @userinfobot)
+// Shared lead-capture function — forwards form submissions to ONE Telegram bot.
+// Reusable across all sites: drop this file into /api of any project and set
+// the same two env vars (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID).
+// The message auto-labels which site + page the lead came from, plus contacts.
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ ok: false, error: 'method_not_allowed' });
@@ -17,32 +17,44 @@ export default async function handler(req, res) {
   if (typeof b === 'string') { try { b = JSON.parse(b); } catch { b = {}; } }
   b = b || {};
 
-  // honeypot — bots fill hidden fields; humans don't
+  // honeypot — bots fill hidden fields, humans don't
   if (b.website) return res.status(200).json({ ok: true });
 
-  const name = (b.name || '').toString().slice(0, 200);
-  const company = (b.company || '').toString().slice(0, 200);
-  const email = (b.email || '').toString().slice(0, 200);
-  const count = (b.count || '').toString().slice(0, 100);
-  const comment = (b.comment || '').toString().slice(0, 1000);
+  const clip = (v, n) => (v == null ? '' : String(v)).slice(0, n).trim();
+  const name = clip(b.name, 200);
+  const email = clip(b.email, 200);
+  const phone = clip(b.phone, 60);
+  const telegram = clip(b.telegram, 100);
+  const company = clip(b.company, 200);
+  const count = clip(b.count, 100);
+  const comment = clip(b.comment, 1500);
+  // site + page: prefer explicit body values, fall back to request headers
+  const source = clip(b.source, 120) || clip(req.headers['host'], 120) || 'сайт';
+  const page = clip(b.page, 300) || clip(req.headers['referer'], 300) || '';
 
-  if (!name || !email) {
-    return res.status(400).json({ ok: false, error: 'missing_fields' });
+  // need a name and at least one way to get back to them
+  if (!name || (!email && !phone && !telegram)) {
+    return res.status(400).json({ ok: false, error: 'missing_contact' });
   }
 
-  const text =
-    '🟣 Заявка на курс — оплата от компании\n\n' +
-    '👤 Имя: ' + name + '\n' +
-    '🏢 Компания: ' + company + '\n' +
-    '✉️ Email: ' + email + '\n' +
-    '👥 Сотрудников: ' + (count || '—') + '\n' +
-    '💬 Комментарий: ' + (comment || '—');
+  const lines = [];
+  lines.push('🟣 Новая заявка');
+  lines.push('🌐 Сайт: ' + source);
+  if (page) lines.push('📄 Страница: ' + page);
+  lines.push('');
+  lines.push('👤 Имя: ' + name);
+  if (email) lines.push('✉️ Email: ' + email);
+  if (phone) lines.push('📞 Телефон: ' + phone);
+  if (telegram) lines.push('💬 Telegram: ' + telegram);
+  if (company) lines.push('🏢 Компания: ' + company);
+  if (count) lines.push('👥 Сотрудников: ' + count);
+  if (comment) lines.push('📝 Комментарий: ' + comment);
 
   try {
     const tg = await fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
+      body: JSON.stringify({ chat_id: chatId, text: lines.join('\n'), disable_web_page_preview: true }),
     });
     if (!tg.ok) {
       return res.status(502).json({ ok: false, error: 'telegram_failed' });

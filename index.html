@@ -716,7 +716,8 @@
       const payload = {
         name: f.name.value, company: f.company.value, email: f.email.value,
         count: f.count.value, comment: f.comment.value,
-        website: f.website ? f.website.value : ''
+        website: f.website ? f.website.value : '',
+        source: location.hostname, page: location.href
       };
       const orig = btn.textContent;
       btn.disabled = true; btn.textContent = 'Отправляем…';
