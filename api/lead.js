@@ -2,7 +2,8 @@
 // AND logs them into a Notion database (pipeline + Mila's commission).
 // Reusable across all sites: drop this file into /api of any project.
 // Env vars (set per Vercel project):
-//   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  — bot notification
+//   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  — bot notification (plus TELEGRAM_EXTRA_CHAT_IDS for partners)
+//   LEAD_CC                               — who is cc'd on the ack email (Mila: ivyplyushch@gmail.com since 23 Nov 2026)
 //   NOTION_TOKEN                          — Notion internal integration secret (ntn_…)
 // The Notion database id is not secret, so it's hardcoded below.
 const NOTION_DB_ID = '9f4e8ca03a014a839d2591cb8099290e';
@@ -19,7 +20,9 @@ export default async function handler(req, res) {
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
+  // Jane's chat plus partners (TELEGRAM_EXTRA_CHAT_IDS, comma-separated Telegram IDs; see api/tg.js)
+  const chatIds = [process.env.TELEGRAM_CHAT_ID, ...String(process.env.TELEGRAM_EXTRA_CHAT_IDS || '').split(',')]
+    .map((s) => String(s || '').trim()).filter(Boolean);
 
   let b = req.body;
   if (typeof b === 'string') { try { b = JSON.parse(b); } catch { b = {}; } }
@@ -54,7 +57,7 @@ export default async function handler(req, res) {
 
   // ── 1) Telegram notification ──
   let tgOk = false;
-  if (token && chatId) {
+  if (token && chatIds.length) {
     const lines = [];
     lines.push('🟣 Новая заявка');
     lines.push('🌐 Сайт: ' + source);
@@ -67,13 +70,12 @@ export default async function handler(req, res) {
     if (company) lines.push('🏢 Компания: ' + company);
     if (count) lines.push('👥 Сотрудников: ' + count);
     if (comment) lines.push('📝 Комментарий: ' + comment);
-    try {
-      const tg = await fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
+    const sent = await Promise.all(chatIds.map((chatId) =>
+      fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: chatId, text: lines.join('\n'), disable_web_page_preview: true }),
-      });
-      tgOk = tg.ok;
-    } catch (e) { /* best-effort */ }
+      }).then((r) => r.ok).catch(() => false) /* best-effort */));
+    tgOk = sent.some(Boolean);
   }
 
   // ── 2) Notion row (best-effort) ──
